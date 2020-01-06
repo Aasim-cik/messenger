@@ -3,6 +3,9 @@
 namespace App\Controller;
 
 use App\Entity\ImagePost;
+use App\Message\Command\AddPonkaToImage;
+use App\Message\Command\DeletePonkaToImage;
+use App\Message\Command\LogEmoji;
 use App\Photo\PhotoPonkaficator;
 use App\Repository\ImagePostRepository;
 use App\Photo\PhotoFileManager;
@@ -12,6 +15,10 @@ use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\MessageBusInterface;
+use Symfony\Component\Messenger\Stamp\DelayStamp;
+use Symfony\Component\Messenger\Transport\AmqpExt\AmqpStamp;
 use Symfony\Component\Routing\Annotation\Route;
 use Symfony\Component\Validator\Constraints\Image;
 use Symfony\Component\Validator\Constraints\NotBlank;
@@ -34,7 +41,7 @@ class ImagePostController extends AbstractController
     /**
      * @Route("/api/images", methods="POST")
      */
-    public function create(Request $request, ValidatorInterface $validator, PhotoFileManager $photoManager, EntityManagerInterface $entityManager, PhotoPonkaficator $ponkaficator)
+    public function create(Request $request, ValidatorInterface $validator, PhotoFileManager $photoManager, EntityManagerInterface $entityManager, MessageBusInterface $messageBus)
     {
         /** @var UploadedFile $imageFile */
         $imageFile = $request->files->get('file');
@@ -56,18 +63,18 @@ class ImagePostController extends AbstractController
         $entityManager->persist($imagePost);
         $entityManager->flush();
 
-        /*
-         * Start Ponkafication!
-         */
-        $updatedContents = $ponkaficator->ponkafy(
-            $photoManager->read($imagePost->getFilename())
-        );
-        $photoManager->update($imagePost->getFilename(), $updatedContents);
-        $imagePost->markAsPonkaAdded();
-        $entityManager->flush();
-        /*
-         * You've been Ponkafied!
-         */
+        $message = new AddPonkaToImage($imagePost->getId());
+        $envelop = new Envelope($message, [
+            new DelayStamp(1000),
+            // pretend we want to route this message via a different
+            // routing key than its transport uses by default
+            new AmqpStamp('normal')
+        ]);
+
+        //$messageBus->dispatch($message);
+        $messageBus->dispatch($envelop);
+
+        //$messageBus->dispatch(new LogEmoji(2));
 
         return $this->toJson($imagePost, 201);
     }
@@ -75,13 +82,9 @@ class ImagePostController extends AbstractController
     /**
      * @Route("/api/images/{id}", methods="DELETE")
      */
-    public function delete(ImagePost $imagePost, EntityManagerInterface $entityManager, PhotoFileManager $photoManager)
+    public function delete(ImagePost $imagePost, MessageBusInterface $messageBus)
     {
-        $photoManager->deleteImage($imagePost->getFilename());
-
-        $entityManager->remove($imagePost);
-        $entityManager->flush();
-
+        $messageBus->dispatch(new DeletePonkaToImage($imagePost));
         return new Response(null, 204);
     }
 
